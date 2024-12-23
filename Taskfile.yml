@@ -1,0 +1,60 @@
+version: '3'
+
+vars:
+  IMAGE_NAME: realgan
+  IMAGE_TAG: latest
+  CONTAINER_NAME: realgan
+
+tasks:
+  setup:
+    cmds:
+      - sudo dnf install -y podman podman-compose podman-docker
+      - sudo usermod --add-subuids 100000-165535 $USER
+      - sudo usermod --add-subgids 100000-165535 $USER
+      - mkdir -p input output
+      - sudo dnf install -y audit
+      - echo "Setting up audit rules..."
+      - sudo auditctl -w /usr/bin/podman -k podman-audit
+
+  build:
+    cmds:
+      - podman build --security-opt seccomp=profile.json -t {{.IMAGE_NAME}}:{{.IMAGE_TAG}} .
+
+  scan:
+    cmds:
+      - dnf install -y trivy
+      - trivy image {{.IMAGE_NAME}}:{{.IMAGE_TAG}}
+
+  run:
+    cmds:
+      - |
+        podman run --rm \
+          --name {{.CONTAINER_NAME}} \
+          --security-opt seccomp=profile.json \
+          --security-opt label=type:container_t \
+          --read-only \
+          --device nvidia.com/gpu=all \
+          --volume ./input:/home/realgan/input:ro \
+          --volume ./output:/home/realgan/output:rw \
+          {{.IMAGE_NAME}}:{{.IMAGE_TAG}}
+
+  monitor:
+    cmds:
+      - podman stats {{.CONTAINER_NAME}}
+      - nvidia-smi
+
+  logs:
+    cmds:
+      - podman logs --follow {{.CONTAINER_NAME}}
+
+  audit:
+    cmds:
+      - sudo ausearch -k podman-audit
+
+  gpu-test:
+    cmds:
+      - |
+        podman run --rm \
+          --device nvidia.com/gpu=all \
+          nvidia/cuda:11.8.0-base-ubuntu22.04 \
+          nvidia-smi
