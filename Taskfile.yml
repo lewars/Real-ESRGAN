@@ -9,16 +9,17 @@ tasks:
   setup:
     cmds:
       - sudo dnf install -y podman podman-compose podman-docker
-      - sudo usermod --add-subuids 100000-165535 $USER
-      - sudo usermod --add-subgids 100000-165535 $USER
       - mkdir -p input output
       - sudo dnf install -y audit
-      - echo "Setting up audit rules..."
-      - sudo auditctl -w /usr/bin/podman -k podman-audit
+      - echo "Checking audit rules..."
+      - |
+        if ! sudo auditctl -l | grep -q "/usr/bin/podman"; then
+          sudo auditctl -w /usr/bin/podman -k podman-audit
+        fi
 
   build:
     cmds:
-      - podman build --security-opt seccomp=profile.json -t {{.IMAGE_NAME}}:{{.IMAGE_TAG}} .
+      - podman build --security-opt seccomp=seccomp-profile.json --security-opt label=type:container_t -t {{.IMAGE_NAME}}:{{.IMAGE_TAG}} .
 
   scan:
     cmds:

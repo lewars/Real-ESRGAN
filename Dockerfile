@@ -1,12 +1,6 @@
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
-# Create non-root user
-RUN useradd -m -u 1000 realgan
-USER realgan
-WORKDIR /home/realgan
-
-# Install system dependencies
-USER root
+# System dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -14,29 +8,34 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Switch back to non-root user
-USER realgan
+# Set non-root user environment variables
+ENV HOME=/home/realgan
+ENV PATH=$HOME/.local/bin:$PATH
+WORKDIR $HOME
 
 # Install PyTorch with CUDA support
-RUN pip install --no-cache-dir --user torch torchvision torchaudio
+RUN pip install --no-cache-dir torch torchvision torchaudio
 
 # Copy local repository
-COPY --chown=realgan:realgan . /home/realgan/Real-ESRGAN
-WORKDIR /home/realgan/Real-ESRGAN
+COPY . $HOME/Real-ESRGAN
+WORKDIR $HOME/Real-ESRGAN
 
 # Install Python dependencies
-RUN pip install --no-cache-dir --user basicsr facexlib gfpgan
-COPY --chown=realgan:realgan requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
-RUN pip install --no-cache-dir --user -e .
+RUN pip install --no-cache-dir basicsr facexlib gfpgan
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -e .
 
 # Set read-only filesystem except for necessary paths
-VOLUME ["/tmp", "/home/realgan/input", "/home/realgan/output"]
+VOLUME ["/tmp", "$HOME/input", "$HOME/output"]
 
-# Set container metadata
+# Container metadata
 LABEL maintainer="Alistair Y. Lewars"
-LABEL description="Real-ESRGAN Image Processing"
-LABEL seccomp="profile.json"
+LABEL description="Real-ESRGAN Image Processing with GPU Support"
+LABEL seccomp="seccomp-profile.json"
 LABEL selinux="container_file_t"
+
+# Run as non-root user
+USER 1000:1000
 
 ENTRYPOINT ["python3", "inference_realesrgan.py"]
