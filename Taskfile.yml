@@ -8,18 +8,16 @@ vars:
 tasks:
   setup:
     cmds:
-      - sudo dnf install -y podman podman-compose podman-docker
       - mkdir -p input output
-      - sudo dnf install -y audit
       - echo "Checking audit rules..."
       - |
-        if ! sudo auditctl -l | grep -q "/usr/bin/podman"; then
-          sudo auditctl -w /usr/bin/podman -k podman-audit
+        if ! sudo auditctl -l | grep -q "/usr/bin/docker"; then
+          sudo auditctl -w /usr/bin/docker -k docker-audit
         fi
 
   build:
     cmds:
-      - podman build --security-opt seccomp=seccomp-profile.json --security-opt label=type:container_t -t {{.IMAGE_NAME}}:{{.IMAGE_TAG}} .
+      - docker build -t {{.IMAGE_NAME}}:{{.IMAGE_TAG}} .
 
   scan:
     cmds:
@@ -29,9 +27,9 @@ tasks:
   run:
     cmds:
       - |
-        podman run --rm \
+        docker run --rm \
           --name {{.CONTAINER_NAME}} \
-          --security-opt seccomp=profile.json \
+          --security-opt seccomp=seccomp-profile.json \
           --security-opt label=type:container_t \
           --read-only \
           --device nvidia.com/gpu=all \
@@ -41,21 +39,21 @@ tasks:
 
   monitor:
     cmds:
-      - podman stats {{.CONTAINER_NAME}}
+      - docker stats {{.CONTAINER_NAME}}
       - nvidia-smi
 
   logs:
     cmds:
-      - podman logs --follow {{.CONTAINER_NAME}}
+      - docker logs --follow {{.CONTAINER_NAME}}
 
   audit:
     cmds:
-      - sudo ausearch -k podman-audit
+      - sudo ausearch -k docker-audit
 
   gpu-test:
     cmds:
       - |
-        podman run --rm \
+        docker run --rm \
           --device nvidia.com/gpu=all \
           nvidia/cuda:11.8.0-base-ubuntu22.04 \
           nvidia-smi

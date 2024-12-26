@@ -62,7 +62,9 @@
                 "umask",
                 "uname",
                 "unshare",
-                "write"
+                "write",
+                "setresgid",
+                "setresuid"
             ],
             "action": "SCMP_ACT_ALLOW"
         }
