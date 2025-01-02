@@ -1,41 +1,42 @@
 FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
-# System dependencies
-RUN apt-get update && apt-get install -y \
+RUN curl -s -L https://nvidia.github.io/libnvidia-container/stable/ubuntu22.04/nvidia-container-toolkit.list | \
+    tee /etc/apt/sources.list.d/nvidia-container-toolkit.list && \
+    apt-key adv --fetch-keys https://nvidia.github.io/nvidia-container-runtime/gpgkey && \
+    apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     python3 \
     python3-pip \
-    && rm -rf /var/lib/apt/lists/*
+    libgl1-mesa-glx \
+    libegl1-mesa \
+    libgles2-mesa \
+    libglib2.0-0 \
+    nvidia-container-toolkit \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m pip install --no-cache-dir --upgrade pip
 
-# Set non-root user environment variables
-ENV HOME=/home/realgan
-ENV PATH=$HOME/.local/bin:$PATH
-WORKDIR $HOME
+ENV HOME=/home/realgan \
+    PATH=/home/realgan/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
-# Install PyTorch with CUDA support
-RUN pip install --no-cache-dir torch torchvision torchaudio
-
-# Copy local repository
-COPY . $HOME/Real-ESRGAN
 WORKDIR $HOME/Real-ESRGAN
 
-# Install Python dependencies
-RUN pip install --no-cache-dir basicsr facexlib gfpgan
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir -e .
+COPY --chown=1000:1000 . .
+RUN mkdir -p weights && \
+    mkdir -p ../output && \
+    chown -R 1000:1000 $HOME
 
-# Set read-only filesystem except for necessary paths
-VOLUME ["/tmp", "$HOME/input", "$HOME/output"]
-
-# Container metadata
-LABEL maintainer="Alistair Y. Lewars"
-LABEL description="Real-ESRGAN Image Processing with GPU Support"
-LABEL seccomp="seccomp-profile.json"
-LABEL selinux="container_file_t"
-
-# Run as non-root user
 USER 1000:1000
+RUN pip3 install --no-cache-dir --user torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 && \
+    pip install --no-cache-dir --user -r requirements.txt && \
+    pip install --no-cache-dir --user -e .
+
+VOLUME ["/tmp", "$HOME/input", "$HOME/output"]
+LABEL maintainer="Alistair Y. Lewars" \
+      description="Real-ESRGAN Image Processing with GPU Support" \
+      seccomp="seccomp-profile.json" \
+      selinux="container_file_t"
 
 ENTRYPOINT ["python3", "inference_realesrgan.py"]

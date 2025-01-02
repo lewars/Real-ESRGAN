@@ -4,6 +4,16 @@ vars:
   IMAGE_NAME: realgan
   IMAGE_TAG: latest
   CONTAINER_NAME: realgan
+  INPUT_VIDEO: input.mp4
+  OUTPUT_VIDEO: output.mp4
+  TMP_INPUT_DIR: ./input
+  TMP_OUTPUT_DIR: ./output
+  IMG_FORMAT: png
+  DEFAULT_MODEL: RealESRGAN_x4plus
+  UID:
+    sh: id -u
+  GID:
+    sh: id -g
 
 tasks:
   setup:
@@ -14,46 +24,127 @@ tasks:
         if ! sudo auditctl -l | grep -q "/usr/bin/docker"; then
           sudo auditctl -w /usr/bin/docker -k docker-audit
         fi
+        if ! sudo auditctl -l | grep -q "/usr/bin/podman"; then
+          sudo auditctl -w /usr/bin/podman -k podman-audit
+        fi
 
   build:
     cmds:
-      - docker build -t {{.IMAGE_NAME}}:{{.IMAGE_TAG}} .
+      - podman build -t {{.IMAGE_NAME}}:{{.IMAGE_TAG}} .
 
   scan:
     cmds:
       - dnf install -y trivy
       - trivy image {{.IMAGE_NAME}}:{{.IMAGE_TAG}}
 
-  run:
+  vid-to-images:
+    deps:
+      - setup
+      - clean-input
     cmds:
       - |
-        docker run --rm \
-          --name {{.CONTAINER_NAME}} \
-          --security-opt seccomp=seccomp-profile.json \
-          --security-opt label=type:container_t \
-          --read-only \
-          --device nvidia.com/gpu=all \
-          --volume ./input:/home/realgan/input:ro \
-          --volume ./output:/home/realgan/output:rw \
-          {{.IMAGE_NAME}}:{{.IMAGE_TAG}}
+        ffmpeg -y -i {{.INPUT_VIDEO}} \
+        -compression_level 0 \
+        -pix_fmt rgb24 \
+        -filter:v fps=24 \
+        {{.TMP_INPUT_DIR}}/frame_%05d.{{.IMG_FORMAT}}
+
+  upscale:
+    deps:
+      - create-volume
+    cmds:
+      - |
+        podman run --rm \
+        --userns=keep-id \
+        --name {{.CONTAINER_NAME}} \
+        --device nvidia.com/gpu=all \
+        --security-opt label=disable \
+        --user {{.UID}}:{{.GID}} \
+        --volume {{.TMP_INPUT_DIR}}:/home/realgan/input:ro,U \
+        --volume {{.TMP_OUTPUT_DIR}}:/home/realgan/output:rw,U \
+        --volume realgan-weights:/home/realgan/Real-ESRGAN/weights:rw,U \
+        localhost/{{.IMAGE_NAME}}:{{.IMAGE_TAG}} {{.ARGS}}
+    vars:
+      ARGS: "-n RealESRGAN_x2plus --fp32 -s 3 -dn 0 -i /home/realgan/input -o /home/realgan/output"
+
+  debug:
+    deps:
+      - create-volume
+    cmds:
+      - |
+        podman run --rm \
+        --userns=keep-id \
+        --name {{.CONTAINER_NAME}} \
+        --device nvidia.com/gpu=all \
+        --security-opt label=disable \
+        --user {{.UID}}:{{.GID}} \
+        --volume {{.TMP_INPUT_DIR}}:/home/realgan/input:ro,U \
+        --volume {{.TMP_OUTPUT_DIR}}:/home/realgan/output:rw,U \
+        --volume realgan-weights:/home/realgan/Real-ESRGAN/weights:rw,U \
+        -it \
+        --entrypoint=/bin/bash \
+        localhost/{{.IMAGE_NAME}}:{{.IMAGE_TAG}}
+    interactive: true
+
+  create-volume:
+    cmds:
+      - |
+        if ! podman volume inspect realgan-weights &> /dev/null; then
+          podman volume create --opt o=uid={{.UID}},gid={{.GID}} realgan-weights
+        fi
+
+  images-to-vid:
+    deps:
+      - clean-output
+    cmds:
+      - |
+        ffmpeg -y -framerate 24 \
+        -i {{.TMP_OUTPUT_DIR}}/frame_%05d_out.{{.IMG_FORMAT}} \
+        -c:v h264_nvenc \
+        -preset p7 \
+        -rc:v vbr \
+        -cq:v 17 \
+        -b:v 8M \
+        -rgb_mode yuv444 \
+        -tune:v hq \
+        {{.TMP_OUTPUT_DIR}}/{{.OUTPUT_VIDEO}}
 
   monitor:
     cmds:
-      - docker stats {{.CONTAINER_NAME}}
+      - podman stats {{.CONTAINER_NAME}}
       - nvidia-smi
 
   logs:
     cmds:
-      - docker logs --follow {{.CONTAINER_NAME}}
+      - podman logs --follow {{.CONTAINER_NAME}}
 
   audit:
     cmds:
-      - sudo ausearch -k docker-audit
+      - sudo ausearch -k podman-audit
 
   gpu-test:
     cmds:
       - |
-        docker run --rm \
+        podman run --rm \
           --device nvidia.com/gpu=all \
           nvidia/cuda:11.8.0-base-ubuntu22.04 \
           nvidia-smi
+
+  clean-input:
+    cmds:
+      - rm -rf {{.TMP_INPUT_DIR}}/*{{.IMG_FORMAT}}}
+
+  clean-output:
+    cmds:
+      - rm -rf {{.TMP_OUTPUT_DIR}}/*{{.IMG_FORMAT}}}
+      - rm -rf {{.TMP_OUTPUT_DIR}}/{{.OUTPUT_VIDEO}}
+
+  clean-volume:
+    cmds:
+      - podman volume rm realgan-weights
+
+  clean:
+    deps:
+      - clean-input
+      - clean-output
+      - clean-volume
